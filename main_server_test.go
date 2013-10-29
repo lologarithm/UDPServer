@@ -9,7 +9,7 @@ func TestConnect(t *testing.T) {
 	exit := make(chan int, 1)
 	go RunServer(exit)
 	fmt.Println("Test starting")
-	time.Sleep(time.Duration(1) * time.Second)
+	time.Sleep(time.Duration(500) * time.Millisecond)
 	ra, err := net.ResolveUDPAddr("udp4", "localhost:24816")
 	con, err := net.DialUDP("udp4", nil, ra)
 	if err != nil {
@@ -23,7 +23,6 @@ func TestConnect(t *testing.T) {
 		fmt.Println(err)
 		t.FailNow()
 	}
-	time.Sleep(time.Duration(1) * time.Second)
+	time.Sleep(time.Duration(500) * time.Millisecond)
 	exit <- 1
-	time.Sleep(time.Duration(1) * time.Second)
 }
