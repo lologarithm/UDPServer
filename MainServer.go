@@ -76,7 +76,7 @@ func (s *Server) sendMessages() {
 	for {
 		msg := <-s.outgoing_player
 		if msg.destination.client_address == nil {
-			msg.destination = s.players[msg.destination.player.id]
+			msg.destination = s.players[msg.destination.user.id]
 		}
 		if n, err := s.conn.WriteToUDP(msg.raw_bytes, msg.destination.client_address); err != nil {
 			fmt.Println("Error: ", err, " Bytes Written: ", n)
@@ -87,7 +87,7 @@ func (s *Server) sendMessages() {
 type Client struct {
 	buffer         []byte
 	client_address *net.UDPAddr
-	player         Player
+	user           User
 }
 
 type Message struct {
@@ -115,6 +115,7 @@ func checkError(err error) {
 }
 
 func RunServer(exit chan int) {
+	fmt.Println("Now listening on port", port)
 	udpAddr, err := net.ResolveUDPAddr("udp4", port)
 	checkError(err)
 
