@@ -38,7 +38,7 @@ func (s *Server) handleMessage() {
 	}
 	if _, ok := s.connections[addr_str]; !ok {
 		s.connections[addr_str] = &Client{client_address: addr, incoming_bytes: make(chan []byte, 100)}
-		fmt.Println("Spawning new goroutine for client!")
+		//fmt.Println("Spawning new goroutine for client!")
 		go s.connections[addr_str].ProcessBytes(s.incoming_requests, s.outgoing_player)
 	}
 	s.connections[addr_str].incoming_bytes <- s.input_buffer[0:n]
@@ -61,17 +61,19 @@ func ParseFrame(raw_bytes []byte) *MessageFrame {
 }
 
 func (s *Server) sendMessages() {
-	count := 0
+	//count := 0
 	for {
 		msg := <-s.outgoing_player
-		count += 1
+		//count += 1
 		if msg.destination.client_address == nil {
 			msg.destination = s.players[msg.destination.user.id]
 		}
 		if n, err := s.conn.WriteToUDP(msg.raw_bytes, msg.destination.client_address); err != nil {
 			fmt.Println("Error: ", err, " Bytes Written: ", n)
 		}
-		fmt.Printf("Sent messages: %v\n", count)
+		//if count % 100 == 0 {
+		//fmt.Printf("Sent messages: %v\n", count)
+		//}
 	}
 }
 
