@@ -14,12 +14,13 @@ const (
 )
 
 type Server struct {
-	conn            *net.UDPConn
-	players         map[int]Client
-	connections     map[net.Addr]Client
-	outgoing_player chan Message
-	input_buffer    []byte
-	encryption_key  *rsa.PrivateKey
+	conn              *net.UDPConn
+	players           map[int32]*Client
+	connections       map[net.Addr]*Client
+	outgoing_player   chan Message
+	incoming_requests chan Message
+	input_buffer      []byte
+	encryption_key    *rsa.PrivateKey
 }
 
 func (s *Server) handleMessage() {
@@ -28,36 +29,21 @@ func (s *Server) handleMessage() {
 		fmt.Println("ERROR: ", err)
 		return
 	}
-
+	if n == 0 {
+		// send exit signal to client
+		close(s.connections[addr].incoming_bytes)
+		delete(s.connections, addr) // Expire the client goroutine.
+	}
 	if _, ok := s.connections[addr]; !ok {
-		s.connections[addr] = Client{client_address: addr}
+		s.connections[addr] = &Client{client_address: addr, incoming_bytes: make(chan []byte, 200)}
+		go s.connections[addr].ProcessBytes(s.incoming_requests, s.outgoing_player)
 	}
-	client := s.connections[addr]
-	client.buffer = append(client.buffer, s.input_buffer[0:n]...)
-	msg_frame := ParseFrame(client.buffer)
-	if msg_frame != nil && int(msg_frame.frame_length+msg_frame.content_length) >= len(client.buffer) {
-		msg_obj := s.parseMessage(&client, msg_frame)
-		fmt.Println("Message: ", msg_obj.raw_bytes)
-		fmt.Println("    Message Type:\t", msg_obj.frame.message_type)
-		fmt.Println("    Content Len:\t", msg_obj.frame.content_length)
-		fmt.Println("    Content: \t\t", msg_obj.Content())
-		msg_obj.destination = client
-		if msg_obj.frame.message_type == 0 {
-			s.outgoing_player <- msg_obj
-		}
-	}
-}
-
-func (s *Server) parseMessage(client *Client, mf *MessageFrame) (m Message) {
-	m.raw_bytes = client.buffer[0 : mf.frame_length+mf.content_length]
-	m.frame = mf
-	client.buffer = client.buffer[mf.frame_length+mf.content_length:]
-	return
+	s.connections[addr].incoming_bytes <- s.input_buffer[0:n]
 }
 
 func ParseFrame(raw_bytes []byte) *MessageFrame {
 	if len(raw_bytes) > 9 {
-		fmt.Println("RAW BYTES:", raw_bytes)
+		//fmt.Println("RAW BYTES:", raw_bytes)
 		mf := new(MessageFrame)
 		mf.message_type = raw_bytes[0]
 		var v int32
@@ -87,13 +73,42 @@ func (s *Server) sendMessages() {
 type Client struct {
 	buffer         []byte
 	client_address *net.UDPAddr
+	incoming_bytes chan []byte
 	user           User
+}
+
+func (client *Client) ProcessBytes(to_client chan Message, outgoing_msg chan Message) {
+	for {
+		dem_bytes, ok := <-client.incoming_bytes
+		if !ok {
+			break
+		}
+		client.buffer = append(client.buffer, dem_bytes...)
+		msg_frame := ParseFrame(client.buffer)
+		if msg_frame != nil && int(msg_frame.frame_length+msg_frame.content_length) >= len(client.buffer) {
+			msg_obj := client.parseMessage(msg_frame)
+			if msg_obj.frame.message_type == 0 {
+				msg_obj.destination = client
+				//fmt.Println("Sending message out.")
+				outgoing_msg <- msg_obj
+			} else {
+				to_client <- msg_obj
+			}
+		}
+	}
+}
+
+func (client *Client) parseMessage(mf *MessageFrame) (m Message) {
+	m.raw_bytes = client.buffer[0 : mf.frame_length+mf.content_length]
+	m.frame = mf
+	client.buffer = client.buffer[mf.frame_length+mf.content_length:]
+	return
 }
 
 type Message struct {
 	raw_bytes   []byte
 	frame       *MessageFrame
-	destination Client
+	destination *Client
 }
 
 func (m *Message) Content() []byte {
@@ -114,15 +129,16 @@ func checkError(err error) {
 	}
 }
 
-func RunServer(exit chan int) {
-	fmt.Println("Now listening on port", port)
-	udpAddr, err := net.ResolveUDPAddr("udp4", port)
+func RunServer(exit chan int, requests chan Message) {
+	udpAddr, err := net.ResolveUDPAddr("udp", port)
 	checkError(err)
+	fmt.Println("Now listening on port", port)
 
 	var s Server
-	s.connections = make(map[net.Addr]Client, 0)
+	s.connections = make(map[net.Addr]*Client, 0)
 	s.input_buffer = make([]byte, 512)
 	s.outgoing_player = make(chan Message, 255)
+	s.incoming_requests = requests
 	s.conn, err = net.ListenUDP("udp", udpAddr)
 	checkError(err)
 
@@ -135,7 +151,7 @@ func RunServer(exit chan int) {
 			s.conn.Close()
 			break
 		default:
-			fmt.Println("Reading.")
+			fmt.Println("Looking for new messages")
 			s.handleMessage()
 		}
 	}
