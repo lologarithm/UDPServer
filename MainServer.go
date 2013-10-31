@@ -16,7 +16,7 @@ const (
 type Server struct {
 	conn              *net.UDPConn
 	players           map[int32]*Client
-	connections       map[net.Addr]*Client
+	connections       map[string]*Client
 	outgoing_player   chan Message
 	incoming_requests chan Message
 	input_buffer      []byte
@@ -29,21 +29,23 @@ func (s *Server) handleMessage() {
 		fmt.Println("ERROR: ", err)
 		return
 	}
+	addr_str := addr.String()
 	if n == 0 {
 		// send exit signal to client
-		close(s.connections[addr].incoming_bytes)
-		delete(s.connections, addr) // Expire the client goroutine.
+		fmt.Println("Disconnect from: ", addr_str)
+		close(s.connections[addr_str].incoming_bytes)
+		delete(s.connections, addr_str) // Expire the client goroutine.
 	}
-	if _, ok := s.connections[addr]; !ok {
-		s.connections[addr] = &Client{client_address: addr, incoming_bytes: make(chan []byte, 200)}
-		go s.connections[addr].ProcessBytes(s.incoming_requests, s.outgoing_player)
+	if _, ok := s.connections[addr_str]; !ok {
+		s.connections[addr_str] = &Client{client_address: addr, incoming_bytes: make(chan []byte, 100)}
+		fmt.Println("Spawning new goroutine for client!")
+		go s.connections[addr_str].ProcessBytes(s.incoming_requests, s.outgoing_player)
 	}
-	s.connections[addr].incoming_bytes <- s.input_buffer[0:n]
+	s.connections[addr_str].incoming_bytes <- s.input_buffer[0:n]
 }
 
 func ParseFrame(raw_bytes []byte) *MessageFrame {
 	if len(raw_bytes) > 9 {
-		//fmt.Println("RAW BYTES:", raw_bytes)
 		mf := new(MessageFrame)
 		mf.message_type = raw_bytes[0]
 		var v int32
@@ -59,14 +61,17 @@ func ParseFrame(raw_bytes []byte) *MessageFrame {
 }
 
 func (s *Server) sendMessages() {
+	count := 0
 	for {
 		msg := <-s.outgoing_player
+		count += 1
 		if msg.destination.client_address == nil {
 			msg.destination = s.players[msg.destination.user.id]
 		}
 		if n, err := s.conn.WriteToUDP(msg.raw_bytes, msg.destination.client_address); err != nil {
 			fmt.Println("Error: ", err, " Bytes Written: ", n)
 		}
+		fmt.Printf("Sent messages: %v\n", count)
 	}
 }
 
@@ -79,20 +84,19 @@ type Client struct {
 
 func (client *Client) ProcessBytes(to_client chan Message, outgoing_msg chan Message) {
 	for {
-		dem_bytes, ok := <-client.incoming_bytes
-		if !ok {
+		if dem_bytes, ok := <-client.incoming_bytes; !ok {
 			break
-		}
-		client.buffer = append(client.buffer, dem_bytes...)
-		msg_frame := ParseFrame(client.buffer)
-		if msg_frame != nil && int(msg_frame.frame_length+msg_frame.content_length) >= len(client.buffer) {
-			msg_obj := client.parseMessage(msg_frame)
-			if msg_obj.frame.message_type == 0 {
-				msg_obj.destination = client
-				//fmt.Println("Sending message out.")
-				outgoing_msg <- msg_obj
-			} else {
-				to_client <- msg_obj
+		} else {
+			client.buffer = append(client.buffer, dem_bytes...)
+			msg_frame := ParseFrame(client.buffer)
+			if msg_frame != nil && int(msg_frame.frame_length+msg_frame.content_length) >= len(client.buffer) {
+				msg_obj := client.parseMessage(msg_frame)
+				if msg_obj.frame.message_type == 0 {
+					msg_obj.destination = client
+					outgoing_msg <- msg_obj
+				} else {
+					to_client <- msg_obj
+				}
 			}
 		}
 	}
@@ -135,9 +139,9 @@ func RunServer(exit chan int, requests chan Message) {
 	fmt.Println("Now listening on port", port)
 
 	var s Server
-	s.connections = make(map[net.Addr]*Client, 0)
-	s.input_buffer = make([]byte, 512)
-	s.outgoing_player = make(chan Message, 255)
+	s.connections = make(map[string]*Client, 512)
+	s.input_buffer = make([]byte, 1024)
+	s.outgoing_player = make(chan Message, 1024)
 	s.incoming_requests = requests
 	s.conn, err = net.ListenUDP("udp", udpAddr)
 	checkError(err)
@@ -151,7 +155,6 @@ func RunServer(exit chan int, requests chan Message) {
 			s.conn.Close()
 			break
 		default:
-			fmt.Println("Looking for new messages")
 			s.handleMessage()
 		}
 	}

@@ -8,7 +8,7 @@ func main() {
 	fmt.Println("Starting!")
 	go RunServer(exit, incoming_requests)
 	go ManageRequests(incoming_requests)
-	go fmt.Println("Server started. Press a key to exit.")
+	fmt.Println("Server started. Press a key to exit.")
 	fmt.Scanln()
 	fmt.Println("Goodbye!")
 	exit <- 1
